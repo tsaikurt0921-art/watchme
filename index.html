@@ -1,0 +1,1143 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Play, User, Lock, ArrowRight, Loader2, Maximize2, Monitor, Layout, 
+  Smartphone, MonitorPlay, CheckCircle2, Grid, Plus, Image as ImageIcon, 
+  Globe, Youtube, Type, X, Settings, ArrowLeft, Trash2, Clock, Check, 
+  Upload, Cloud, AlertCircle, FileVideo, Minimize2, ExternalLink, Save, FolderHeart,
+  CloudSun, Sun, CloudRain, CloudLightning, Snowflake, Wind, Moon, Thermometer, Search, MapPin, Info
+} from 'lucide-react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, doc, setDoc, getDoc, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp } from 'firebase/firestore';
+
+// --- Firebase 初始化 ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+// --- 城市座標資料庫 (台灣主要縣市) ---
+const TAIWAN_CITIES = [
+  { name: '臺北市', lat: 25.0330, lon: 121.5654 },
+  { name: '新北市', lat: 25.0111, lon: 121.4657 },
+  { name: '桃園市', lat: 24.9936, lon: 121.3009 },
+  { name: '臺中市', lat: 24.1477, lon: 120.6736 },
+  { name: '臺南市', lat: 22.9997, lon: 120.2270 },
+  { name: '高雄市', lat: 22.6273, lon: 120.3014 },
+  { name: '基隆市', lat: 24.7963, lon: 121.7371 },
+  { name: '新竹市', lat: 24.8138, lon: 120.9675 },
+  { name: '嘉義市', lat: 22.9947, lon: 120.4489 },
+];
+
+// --- 嚴格比例版型資料庫 ---
+const TEMPLATES = [
+  // --- 橫式版型 (1920x1080) ---
+  { id: 'L01', name: '全螢幕標準 (16:9)', type: 'landscape', category: '單一媒體', layout: 'L_FULL_16_9', zoneCount: 1, desc: '1個 16:9' },
+  { id: 'L02', name: '四分割電視牆 (16:9)', type: 'landscape', category: '多媒體', layout: 'L_GRID_4', zoneCount: 4, desc: '4個 16:9' },
+  { id: 'L03', name: '上下橫幅+雙影片', type: 'landscape', category: '零售', layout: 'L_BANNER_SANDWICH', zoneCount: 4, desc: '2個 Banner + 2個 16:9' },
+  { id: 'L04', name: '主視覺+右側輪播', type: 'landscape', category: '企業', layout: 'L_MAIN_RIGHT_COL', zoneCount: 5, desc: '1個 4:3 + 4個 16:9' },
+  { id: 'L05', name: '全橫幅廣告', type: 'landscape', category: '資訊', layout: 'L_ALL_BANNERS', zoneCount: 4, desc: '4個 Banner' },
+  { id: 'L06', name: '頂部橫幅+複合主視', type: 'landscape', category: '複合', layout: 'L_TOP_BANNER_SPLIT', zoneCount: 5, desc: 'Banner + 4個 16:9' },
+  { id: 'L07', name: '九宮格監控牆', type: 'landscape', category: '多媒體', layout: 'L_GRID_9', zoneCount: 9, desc: '9個 16:9' },
+  { id: 'L08', name: '左側輪播+右側主視', type: 'landscape', category: '企業', layout: 'L_LEFT_COL_MAIN_RIGHT', zoneCount: 5, desc: '4個 16:9 + 1個 4:3' },
+  { id: 'L09', name: '橫向三直式流媒體', type: 'landscape', category: '社群', layout: 'L_3_PORTRAIT', zoneCount: 3, desc: '3個 9:16' },
+  { id: 'L10', name: '雙主圖+雙跑馬燈', type: 'landscape', category: '零售', layout: 'L_SPLIT_AND_BANNERS', zoneCount: 4, desc: '2個 16:9 + 2個 Banner' },
+
+  // --- 直式版型 (1080x1920) ---
+  { id: 'P01', name: '全螢幕直式 (9:16)', type: 'portrait', category: '單一媒體', layout: 'P_FULL_9_16', zoneCount: 1, desc: '1個 9:16 (滿版)' },
+  { id: 'P02', name: '四分割監控 (9:16)', type: 'portrait', category: '多媒體', layout: 'P_GRID_4_9_16', zoneCount: 4, desc: '4個 9:16 (滿版)' },
+  { id: 'P03', name: '直式三段廣告 (16:9)', type: 'portrait', category: '廣告', layout: 'P_STACK_3_16_9', zoneCount: 3, desc: '3個 16:9' },
+  { id: 'P04', name: '雙主圖展示 (4:3)', type: 'portrait', category: '畫廊', layout: 'P_STACK_2_4_3', zoneCount: 2, desc: '2個 4:3' },
+  { id: 'P05', name: '上影下雙圖 (複合)', type: 'portrait', category: '複合', layout: 'P_HYBRID_TOP_16_9_BOT_9_16', zoneCount: 3, desc: '1個 16:9 + 2個 9:16' },
+  { id: 'P06', name: '上雙圖下影 (複合)', type: 'portrait', category: '複合', layout: 'P_HYBRID_TOP_9_16_BOT_16_9', zoneCount: 3, desc: '2個 9:16 + 1個 16:9' },
+  { id: 'P07', name: '商品矩陣牆 (16:9)', type: 'portrait', category: '零售', layout: 'P_GRID_12_16_9', zoneCount: 12, desc: '12個 16:9 小區塊' },
+  { id: 'P08', name: '資訊列表 (Banner)', type: 'portrait', category: '資訊', layout: 'P_BANNER_12', zoneCount: 12, desc: '12個 Banner 條列' },
+  { id: 'P09', name: '主視覺+列表 (複合)', type: 'portrait', category: '導覽', layout: 'P_MAIN_4_3_BOT_BANNER', zoneCount: 5, desc: '1個 4:3 + 4個 Banner' },
+  { id: 'P10', name: '菜單推薦 (16:9)', type: 'portrait', category: '餐飲', layout: 'P_MENU_5_ZONE', zoneCount: 5, desc: '1個大 16:9 + 4個小 16:9' },
+];
+
+const DEFAULT_TEXT_BG = "https://images.unsplash.com/photo-1557683316-973673baf926?q=80&w=2029&auto=format&fit=crop";
+
+// --- 版型預覽元件 ---
+const TemplatePreview = ({ layout, type }) => {
+  const isLandscape = type === 'landscape';
+  const containerClass = isLandscape ? 'w-full aspect-video' : 'h-full aspect-[9/16] mx-auto';
+  const Block = ({ className = "", color = "bg-slate-700/50", label = "" }) => (
+    <div className={`w-full h-full rounded-[1px] border border-slate-600/30 ${color} ${className} flex items-center justify-center`}>
+       {label && <span className="text-[8px] text-white/30">{label}</span>}
+    </div>
+  );
+
+  const renderLayout = () => {
+    switch (layout) {
+      // Landscape
+      case 'L_FULL_16_9': return <Block color="bg-blue-500/20" label="16:9" />;
+      case 'L_GRID_4': return <div className="grid grid-cols-2 grid-rows-2 h-full"><Block label="16:9"/><Block label="16:9"/><Block label="16:9"/><Block label="16:9"/></div>;
+      case 'L_BANNER_SANDWICH': return <div className="flex flex-col h-full"><div className="h-[25%]"><Block color="bg-yellow-500/20" label="Banner" /></div><div className="h-[50%] flex"><div className="w-1/2"><Block label="16:9"/></div><div className="w-1/2"><Block label="16:9"/></div></div><div className="h-[25%]"><Block color="bg-yellow-500/20" label="Banner" /></div></div>;
+      case 'L_MAIN_RIGHT_COL': return <div className="flex h-full"><div className="w-[75%]"><Block color="bg-purple-500/20" label="4:3" /></div><div className="w-[25%] flex flex-col"><div className="h-1/4"><Block label="16:9"/></div><div className="h-1/4"><Block label="16:9"/></div><div className="h-1/4"><Block label="16:9"/></div><div className="h-1/4"><Block label="16:9"/></div></div></div>;
+      case 'L_ALL_BANNERS': return <div className="flex flex-col h-full"><div className="h-1/4"><Block label="Banner"/></div><div className="h-1/4"><Block label="Banner"/></div><div className="h-1/4"><Block label="Banner"/></div><div className="h-1/4"><Block label="Banner"/></div></div>;
+      case 'L_TOP_BANNER_SPLIT': return <div className="flex flex-col h-full"><div className="h-[25%]"><Block color="bg-yellow-500/20" label="Banner" /></div><div className="h-[75%] flex"><div className="w-[75%]"><Block label="16:9" /></div><div className="w-[25%] flex flex-col"><div className="h-1/3"><Block label="16:9"/></div><div className="h-1/3"><Block label="16:9"/></div><div className="h-1/3"><Block label="16:9"/></div></div></div></div>;
+      case 'L_GRID_9': return <div className="grid grid-cols-3 grid-rows-3 h-full">{[...Array(9)].map((_, i) => <Block key={i} label="16:9" />)}</div>;
+      case 'L_LEFT_COL_MAIN_RIGHT': return <div className="flex h-full"><div className="w-[25%] flex flex-col"><div className="h-1/4"><Block label="16:9"/></div><div className="h-1/4"><Block label="16:9"/></div><div className="h-1/4"><Block label="16:9"/></div><div className="h-1/4"><Block label="16:9"/></div></div><div className="w-[75%]"><Block color="bg-purple-500/20" label="4:3" /></div></div>;
+      case 'L_3_PORTRAIT': return <div className="flex h-full justify-center gap-1 bg-black/20"><div className="h-full aspect-[9/16]"><Block label="9:16"/></div><div className="h-full aspect-[9/16]"><Block label="9:16"/></div><div className="h-full aspect-[9/16]"><Block label="9:16"/></div></div>;
+      case 'L_SPLIT_AND_BANNERS': return <div className="flex flex-col h-full"><div className="h-[50%] flex"><div className="w-1/2"><Block label="16:9"/></div><div className="w-1/2"><Block label="16:9"/></div></div><div className="h-[25%]"><Block color="bg-yellow-500/20" label="Banner" /></div><div className="h-[25%]"><Block color="bg-yellow-500/20" label="Banner" /></div></div>;
+
+      // Portrait
+      case 'P_FULL_9_16': return <Block color="bg-blue-500/20" label="9:16" />;
+      case 'P_GRID_4_9_16': return <div className="grid grid-cols-2 grid-rows-2 h-full"><Block label="9:16"/><Block label="9:16"/><Block label="9:16"/><Block label="9:16"/></div>;
+      case 'P_STACK_3_16_9': return <div className="flex flex-col items-center justify-center h-full gap-[1px]"><div className="w-full aspect-video"><Block label="16:9"/></div><div className="w-full aspect-video"><Block label="16:9"/></div><div className="w-full aspect-video"><Block label="16:9"/></div></div>;
+      case 'P_STACK_2_4_3': return <div className="flex flex-col items-center justify-center h-full gap-[1px]"><div className="w-full aspect-[4/3]"><Block label="4:3"/></div><div className="w-full aspect-[4/3]"><Block label="4:3"/></div></div>;
+      case 'P_HYBRID_TOP_16_9_BOT_9_16': return <div className="flex flex-col items-center justify-center h-full gap-[1px]"><div className="w-full aspect-video"><Block label="16:9"/></div><div className="w-full flex gap-[1px] aspect-[18/16]"><div className="w-1/2 h-full"><Block label="9:16"/></div><div className="w-1/2 h-full"><Block label="9:16"/></div></div></div>;
+      case 'P_HYBRID_TOP_9_16_BOT_16_9': return <div className="flex flex-col items-center justify-center h-full gap-[1px]"><div className="w-full flex gap-[1px] aspect-[18/16]"><div className="w-1/2 h-full"><Block label="9:16"/></div><div className="w-1/2 h-full"><Block label="9:16"/></div></div><div className="w-full aspect-video"><Block label="16:9"/></div></div>;
+      case 'P_GRID_12_16_9': return <div className="w-full h-full flex flex-col items-center justify-center bg-black"><div className="w-full grid grid-cols-2 grid-rows-6 gap-[1px]">{[...Array(12)].map((_, i) => <Block key={i} label="16:9" />)}</div></div>;
+      case 'P_BANNER_12': return <div className="flex flex-col h-full gap-[1px] justify-center">{[...Array(12)].map((_, i) => <div key={i} className="w-full aspect-[1080/152]"><Block label="Banner" color="bg-yellow-500/10"/></div>)}</div>;
+      case 'P_MAIN_4_3_BOT_BANNER': return <div className="flex flex-col items-center justify-center h-full gap-[1px] bg-black"><div className="w-full aspect-[4/3]"><Block label="4:3"/></div><div className="w-full flex flex-col gap-[1px]">{[...Array(4)].map((_, i) => <div key={i} className="w-full aspect-[1080/152]"><Block label="Banner"/></div>)}</div></div>;
+      case 'P_MENU_5_ZONE': return <div className="flex flex-col items-center justify-center h-full gap-[1px] bg-black"><div className="w-full aspect-video"><Block label="16:9"/></div><div className="w-full grid grid-cols-2 gap-[1px] aspect-[32/9]"><Block label="16:9"/><Block label="16:9"/><Block label="16:9"/><Block label="16:9"/></div></div>;
+      default: return <Block />;
+    }
+  };
+
+  return (
+    <div className={`${containerClass} bg-slate-900 border border-slate-700 p-1 shadow-inner flex items-center justify-center`}>
+      <div className="w-full h-full">{renderLayout()}</div>
+    </div>
+  );
+};
+
+// --- Helper Functions ---
+
+const getYouTubeVideoId = (url) => {
+  if (!url) return null;
+  const regExp = /(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([^?&"'>]+)/;
+  const match = url.match(regExp);
+  return match ? match[1] : null;
+};
+
+const transformWebUrl = (url) => {
+  if (!url) return '';
+  // 自動轉換 Facebook 貼文/影片
+  if (url.includes('facebook.com') || url.includes('fb.watch')) {
+    const cleanUrl = url.split('?')[0];
+    return `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(cleanUrl)}&show_text=0&width=auto`;
+  }
+  // 自動轉換 Instagram
+  if (url.includes('instagram.com/p/') || url.includes('instagram.com/reel/')) {
+    let clean = url.split('?')[0];
+    if(!clean.endsWith('/')) clean += '/';
+    return clean + 'embed';
+  }
+  return url;
+};
+
+// 檢查是否為已知必定阻擋嵌入的網域 (X-Frame-Options: DENY)
+const isKnownBlockedUrl = (url) => {
+  if (!url) return false;
+  const lowerUrl = url.toLowerCase();
+  
+  // 這些知名網站嚴格禁止 iframe 嵌入
+  if (
+    lowerUrl.includes('aistudio.google.com') ||
+    lowerUrl.includes('github.com') ||
+    lowerUrl.includes('yahoo.com') ||
+    (lowerUrl.includes('google.com') && !lowerUrl.includes('/embed') && !lowerUrl.includes('/maps') && !lowerUrl.includes('docs.google.com'))
+  ) {
+    return true;
+  }
+  return false;
+};
+
+// --- Weather Helpers ---
+
+const getWeatherIcon = (code, isDay) => {
+  if (code === 0) return isDay ? <Sun className="text-yellow-400 animate-pulse-slow" size="100%" /> : <Moon className="text-slate-300" size="100%" />;
+  if (code >= 1 && code <= 3) return <CloudSun className="text-gray-300" size="100%" />;
+  if (code >= 45 && code <= 48) return <Cloud className="text-gray-400" size="100%" />;
+  if (code >= 51 && code <= 67) return <CloudRain className="text-blue-300" size="100%" />;
+  if (code >= 71 && code <= 77) return <Snowflake className="text-white animate-spin-slow" size="100%" />;
+  if (code >= 80 && code <= 82) return <CloudRain className="text-blue-400" size="100%" />;
+  if (code >= 95 && code <= 99) return <CloudLightning className="text-yellow-300 animate-pulse" size="100%" />;
+  return <Cloud className="text-gray-400" size="100%" />;
+};
+
+const getWeatherStatusText = (code) => {
+  const map = {
+    0: '晴朗', 1: '晴時多雲', 2: '多雲', 3: '陰天',
+    45: '起霧', 48: '白霜霧',
+    51: '毛毛雨', 53: '毛毛雨', 55: '強毛毛雨',
+    61: '小雨', 63: '中雨', 65: '大雨',
+    80: '局部陣雨', 81: '陣雨', 82: '強陣雨',
+    95: '雷雨', 96: '雷雨伴隨冰雹', 99: '強烈雷雨'
+  };
+  return map[code] || '多雲';
+};
+
+// --- ZoneContentRenderer ---
+const ZoneContentRenderer = ({ content, isPlaying }) => {
+  const [currentSlide, setCurrentSlide] = useState(0);
+  const [weatherData, setWeatherData] = useState(null);
+  const [currentTime, setCurrentTime] = useState(new Date());
+  // 用於判斷容器是否為橫長條 (Banner)
+  const containerRef = useRef(null);
+  const [isBanner, setIsBanner] = useState(false);
+
+  // 監聽容器尺寸變化，決定天氣版型
+  useEffect(() => {
+    if (content?.type === 'weather' && containerRef.current) {
+      const resizeObserver = new ResizeObserver((entries) => {
+        for (let entry of entries) {
+          const { width, height } = entry.contentRect;
+          // 如果寬度大於高度的 2.5 倍，視為橫幅模式 (Banner)
+          setIsBanner(width > height * 2.5);
+        }
+      });
+      resizeObserver.observe(containerRef.current);
+      return () => resizeObserver.disconnect();
+    }
+  }, [content]);
+
+  useEffect(() => {
+    if (content?.type === 'image' && content.images?.length > 1) {
+      const interval = setInterval(() => {
+        setCurrentSlide(prev => (prev + 1) % content.images.length);
+      }, (content.speed || 5) * 1000);
+      return () => clearInterval(interval);
+    }
+  }, [content]);
+
+  useEffect(() => {
+    if (content?.type === 'weather') {
+      const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+      
+      const fetchWeather = async () => {
+        try {
+          const lat = content.lat || 25.0330;
+          const lon = content.lon || 121.5654;
+          // 強制不使用 Cache，確保數據最新
+          const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,is_day&daily=temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=1&time=${Date.now()}`);
+          const data = await res.json();
+          setWeatherData(data);
+        } catch (e) {
+          console.error("Weather fetch error", e);
+        }
+      };
+      
+      fetchWeather();
+      // 每 5 分鐘更新一次天氣資料
+      const weatherTimer = setInterval(fetchWeather, 300000); 
+      
+      return () => {
+        clearInterval(timer);
+        clearInterval(weatherTimer);
+      };
+    }
+  }, [content]);
+
+  if (!content) return null;
+
+  switch (content.type) {
+    case 'weather':
+      if (!weatherData || !weatherData.current) return <div className="w-full h-full flex items-center justify-center bg-slate-800 text-white"><Loader2 className="animate-spin text-blue-400" size={32}/><span className="ml-2 text-sm text-slate-400">載入氣象資訊...</span></div>;
+      
+      const { current, daily } = weatherData;
+      const todayMax = daily.temperature_2m_max[0];
+      const todayMin = daily.temperature_2m_min[0];
+      const cityName = content.cityName || '臺北市';
+
+      return (
+        <div ref={containerRef} className="w-full h-full bg-gradient-to-br from-slate-800 to-slate-900 text-white relative overflow-hidden select-none">
+          {/* 背景裝飾 */}
+          <div className="absolute top-0 right-0 w-full h-full overflow-hidden opacity-20 pointer-events-none">
+             <div className="absolute -top-[20%] -right-[10%] w-[60%] pt-[60%] bg-blue-500 rounded-full blur-[100px]"></div>
+             <div className="absolute -bottom-[20%] -left-[10%] w-[50%] pt-[50%] bg-purple-500 rounded-full blur-[100px]"></div>
+          </div>
+
+          {/* 內容層 */}
+          <div className={`w-full h-full flex p-4 md:p-6 z-10 relative ${isBanner ? 'flex-row items-center justify-between' : 'flex-col justify-between'}`}>
+            
+            {/* 左側/上方：地區與時間 */}
+            <div className={`${isBanner ? 'flex items-center gap-8' : 'text-left'}`}>
+               <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <MapPin size={isBanner ? 20 : 24} className="text-red-400" />
+                    <h2 className={`${isBanner ? 'text-3xl' : 'text-3xl md:text-5xl'} font-bold tracking-wider drop-shadow-md`}>
+                      {cityName}
+                    </h2>
+                  </div>
+                  <p className="text-slate-300 font-mono text-sm md:text-base opacity-80">
+                    {currentTime.toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}
+                  </p>
+               </div>
+               {/* 橫幅模式下，時間顯示在左側區域旁 */}
+               {isBanner && (
+                 <div className="h-12 w-[1px] bg-white/20 mx-4"></div>
+               )}
+               <p className={`${isBanner ? 'text-4xl' : 'text-5xl md:text-7xl mt-4'} font-mono font-bold text-white drop-shadow-lg tabular-nums`}>
+                 {currentTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}
+               </p>
+            </div>
+
+            {/* 右側/下方：天氣詳情 */}
+            <div className={`flex items-center ${isBanner ? 'gap-8' : 'flex-1 justify-center flex-col'}`}>
+               <div className={`flex items-center ${isBanner ? 'gap-4' : 'flex-col gap-2'}`}>
+                  <div className={`${isBanner ? 'w-16 h-16' : 'w-32 h-32 md:w-48 md:h-48'} drop-shadow-2xl filter`}>
+                    {getWeatherIcon(current.weather_code, current.is_day)}
+                  </div>
+                  <div className={`flex flex-col ${isBanner ? 'items-start' : 'items-center'}`}>
+                    <span className={`${isBanner ? 'text-5xl' : 'text-6xl md:text-8xl'} font-bold leading-none`}>
+                      {Math.round(current.temperature_2m)}°
+                    </span>
+                    <span className="text-lg md:text-2xl font-light opacity-90 mt-1">
+                      {getWeatherStatusText(current.weather_code)}
+                    </span>
+                  </div>
+               </div>
+               
+               {/* 溫度範圍 */}
+               <div className={`flex ${isBanner ? 'flex-col gap-1 border-l border-white/20 pl-6' : 'mt-8 gap-8 w-full justify-center'}`}>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs md:text-sm uppercase text-slate-400">最高</span>
+                    <span className="text-xl md:text-2xl font-bold text-red-300">{Math.round(todayMax)}°</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs md:text-sm uppercase text-slate-400">最低</span>
+                    <span className="text-xl md:text-2xl font-bold text-blue-300">{Math.round(todayMin)}°</span>
+                  </div>
+               </div>
+            </div>
+
+          </div>
+        </div>
+      );
+
+    case 'image':
+      if (!content.images || content.images.length === 0) return null;
+      return (
+        <div className="w-full h-full relative overflow-hidden bg-black">
+          {content.images.map((img, idx) => (
+             <img key={idx} src={img} alt={`Slide ${idx}`} className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ${idx === currentSlide ? 'opacity-100' : 'opacity-0'}`} />
+          ))}
+        </div>
+      );
+    case 'web':
+      let safeUrl = content.url;
+      if (safeUrl && !safeUrl.startsWith('http://') && !safeUrl.startsWith('https://')) {
+        safeUrl = `https://${safeUrl}`;
+      }
+      
+      const finalUrl = transformWebUrl(safeUrl);
+      const isVideoFile = finalUrl.match(/\.(mp4|webm|ogg|mov)$/i);
+
+      if (isVideoFile) {
+         return (
+          <div className="w-full h-full bg-black relative flex items-center justify-center">
+            <video 
+              src={finalUrl}
+              className="w-full h-full object-contain pointer-events-none"
+              autoPlay loop muted playsInline
+            />
+            {!isPlaying && <div className="absolute inset-0 bg-transparent" />}
+          </div>
+         );
+      }
+      
+      // 智慧阻擋偵測：若遇到 Google AI Studio 等禁止嵌入的網站，顯示替代的導引畫面
+      if (isKnownBlockedUrl(finalUrl)) {
+        return (
+          <div className="w-full h-full bg-slate-900 flex flex-col items-center justify-center text-center p-6 relative group border border-slate-800">
+            <Globe size={64} className="mb-4 text-blue-500 opacity-80" />
+            <h3 className="text-xl md:text-2xl font-bold text-white mb-2">無法在版面中直接顯示</h3>
+            <p className="text-slate-400 text-sm max-w-md mb-6">
+              基於該網站 (如 Google, AI Studio) 的高度安全性設定，強制禁止被第三方系統嵌入。<br/>您可以點擊下方按鈕安全地開啟它。
+            </p>
+            <a 
+              href={safeUrl} 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className={`flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-full font-medium transition-all shadow-lg shadow-blue-500/30 ${!isPlaying && 'pointer-events-none opacity-50'}`}
+            >
+              <ExternalLink size={18} />
+              在新視窗安全開啟
+            </a>
+            {/* 非播放模式下覆蓋透明層，允許編輯點擊 */}
+            {!isPlaying && <div className="absolute inset-0 bg-transparent z-10" />}
+          </div>
+        );
+      }
+
+      return (
+        <div className="w-full h-full bg-white relative group">
+          {finalUrl ? (
+            <iframe 
+              src={finalUrl} 
+              // 完全移除 sandbox 以解除最高的網頁相容性限制，這是多數「灰色哭臉」的解法之一
+              className={`w-full h-full border-0 ${isPlaying ? 'pointer-events-auto' : 'pointer-events-none select-none'}`}
+              title="Web View" 
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
+            />
+          ) : (
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 bg-slate-900">
+              <Globe size={48} className="mb-2 opacity-50"/>
+              <p>請輸入網址</p>
+            </div>
+          )}
+          {!isPlaying && <div className="absolute inset-0 bg-transparent" />}
+          
+          {/* 增加一個外部開啟按鈕，給予使用者備用方案 */}
+          {finalUrl && (
+            <a 
+              href={safeUrl} 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className={`absolute bottom-4 right-4 bg-blue-600 hover:bg-blue-500 text-white p-3 rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-20 shadow-lg flex items-center gap-2 ${!isPlaying && 'pointer-events-none'}`} 
+              title="在新視窗開啟 (若依然無法嵌入)"
+            >
+              <ExternalLink size={18} />
+            </a>
+          )}
+        </div>
+      );
+    case 'video':
+      const videoId = getYouTubeVideoId(content.url);
+      if (videoId) {
+        // 標準 YouTube 嵌入參數，不加入 origin
+        const embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=0&loop=1&playlist=${videoId}&playsinline=1`;
+        return (
+          <div className="w-full h-full bg-black relative">
+            <iframe 
+              width="100%" 
+              height="100%" 
+              src={embedUrl} 
+              title="YouTube" 
+              frameBorder="0" 
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
+              referrerPolicy="strict-origin-when-cross-origin" 
+              allowFullScreen 
+              className="w-full h-full pointer-events-none" 
+            />
+             <div className="absolute inset-0 bg-transparent" />
+          </div>
+        );
+      } 
+      if (content.url) {
+        return (
+          <div className="w-full h-full bg-black relative flex items-center justify-center">
+            <video src={content.url} className="w-full h-full object-contain pointer-events-none" autoPlay loop muted playsInline />
+            <div className="absolute inset-0 bg-transparent" />
+          </div>
+        );
+      }
+      return <div className="w-full h-full bg-slate-900 flex flex-col items-center justify-center text-slate-500"><Youtube size={48} className="mb-2 opacity-50"/><p>請輸入 YouTube 連結或上傳影片</p></div>;
+    case 'text':
+      return (
+        <div className="w-full h-full relative flex items-center justify-center p-4 text-center" style={{ backgroundImage: `url(${DEFAULT_TEXT_BG})`, backgroundSize: 'cover', backgroundPosition: 'center' }}>
+          <div className="absolute inset-0 bg-black/40" />
+          <div className="relative z-10 w-full max-h-full overflow-hidden flex items-center justify-center">
+             <h2 className="text-white font-bold text-2xl md:text-4xl drop-shadow-lg break-words whitespace-pre-wrap overflow-wrap-anywhere">{content.text || "請輸入文字內容"}</h2>
+          </div>
+        </div>
+      );
+    default: return null;
+  }
+};
+
+// --- LayoutRenderer ---
+const LayoutRenderer = ({ layout, zonesData, onZoneClick, isPlaying }) => {
+  const Zone = ({ index, className = "", label = "" }) => {
+    const hasContent = !!zonesData[index];
+    return (
+      <div 
+        onClick={() => !isPlaying && onZoneClick(index)} 
+        className={`relative overflow-hidden group transition-all duration-300 ${
+          isPlaying ? 'border-0' : `cursor-pointer border ${hasContent ? 'border-transparent hover:border-blue-400' : 'border-slate-700 bg-slate-800/50 hover:bg-slate-800 hover:border-blue-500'}`
+        } ${className}`}
+      >
+        {hasContent ? <ZoneContentRenderer content={zonesData[index]} isPlaying={isPlaying} /> : !isPlaying && (
+            <div className="flex h-full w-full flex-col items-center justify-center text-slate-500 transition-colors group-hover:text-blue-400">
+              <Plus size={24} className="mb-1" />
+              <span className="text-xs font-medium text-center px-2">Zone {index + 1}<br/><span className="opacity-50 text-[10px]">{label}</span></span>
+            </div>
+        )}
+        {!isPlaying && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 transition-opacity group-hover:opacity-100 pointer-events-none z-20">
+            <div className="rounded-full bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-lg flex items-center gap-2"><Settings size={16} />{hasContent ? '編輯' : '新增'}</div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  switch (layout) {
+    case 'L_FULL_16_9': return <div className="w-full h-full"><Zone index={0} className="w-full h-full" label="16:9" /></div>;
+    case 'L_GRID_4': return <div className="w-full h-full grid grid-cols-2 grid-rows-2"><Zone index={0} label="16:9" /><Zone index={1} label="16:9" /><Zone index={2} label="16:9" /><Zone index={3} label="16:9" /></div>;
+    case 'L_BANNER_SANDWICH': return <div className="w-full h-full flex flex-col"><div className="h-[25%]"><Zone index={0} className="w-full h-full" label="1920x270" /></div><div className="h-[50%] flex"><div className="w-1/2"><Zone index={1} className="w-full h-full" label="16:9" /></div><div className="w-1/2"><Zone index={2} className="w-full h-full" label="16:9" /></div></div><div className="h-[25%]"><Zone index={3} className="w-full h-full" label="1920x270" /></div></div>;
+    case 'L_MAIN_RIGHT_COL': return <div className="w-full h-full flex"><div className="w-[75%]"><Zone index={0} className="w-full h-full" label="4:3 (1440x1080)" /></div><div className="w-[25%] flex flex-col"><Zone index={1} className="h-1/4" label="16:9" /><Zone index={2} className="h-1/4" label="16:9" /><Zone index={3} className="h-1/4" label="16:9" /><Zone index={4} className="h-1/4" label="16:9" /></div></div>;
+    case 'L_ALL_BANNERS': return <div className="w-full h-full flex flex-col"><Zone index={0} className="h-1/4" label="1920x270" /><Zone index={1} className="h-1/4" label="1920x270" /><Zone index={2} className="h-1/4" label="1920x270" /><Zone index={3} className="h-1/4" label="1920x270" /></div>;
+    case 'L_TOP_BANNER_SPLIT': return <div className="w-full h-full flex flex-col"><div className="h-[25%]"><Zone index={0} className="w-full h-full" label="1920x270" /></div><div className="h-[75%] flex"><div className="w-[75%]"><Zone index={1} className="w-full h-full" label="16:9 (1440x810)" /></div><div className="w-[25%] flex flex-col"><Zone index={2} className="h-1/3" label="16:9" /><Zone index={3} className="h-1/3" label="16:9" /><Zone index={4} className="h-1/3" label="16:9" /></div></div></div>;
+    case 'L_GRID_9': return <div className="w-full h-full grid grid-cols-3 grid-rows-3">{[...Array(9)].map((_, i) => <Zone key={i} index={i} label="16:9" />)}</div>;
+    case 'L_LEFT_COL_MAIN_RIGHT': return <div className="w-full h-full flex"><div className="w-[25%] flex flex-col"><Zone index={0} className="h-1/4" label="16:9" /><Zone index={1} className="h-1/4" label="16:9" /><Zone index={2} className="h-1/4" label="16:9" /><Zone index={3} className="h-1/4" label="16:9" /></div><div className="w-[75%]"><Zone index={4} className="w-full h-full" label="4:3 (1440x1080)" /></div></div>;
+    case 'L_3_PORTRAIT': return <div className="w-full h-full flex items-center justify-center gap-1 bg-black"><div className="h-full aspect-[9/16]"><Zone index={0} className="w-full h-full" label="9:16" /></div><div className="h-full aspect-[9/16]"><Zone index={1} className="w-full h-full" label="9:16" /></div><div className="h-full aspect-[9/16]"><Zone index={2} className="w-full h-full" label="9:16" /></div></div>;
+    case 'L_SPLIT_AND_BANNERS': return <div className="w-full h-full flex flex-col"><div className="h-[50%] flex"><div className="w-1/2"><Zone index={0} className="w-full h-full" label="16:9" /></div><div className="w-1/2"><Zone index={1} className="w-full h-full" label="16:9" /></div></div><div className="h-[25%]"><Zone index={2} className="w-full h-full" label="1920x270" /></div><div className="h-[25%]"><Zone index={3} className="w-full h-full" label="1920x270" /></div></div>;
+
+    case 'P_FULL_9_16': return <div className="w-full h-full"><Zone index={0} className="w-full h-full" label="9:16" /></div>;
+    case 'P_GRID_4_9_16': return <div className="w-full h-full grid grid-cols-2 grid-rows-2"><Zone index={0} label="9:16" /><Zone index={1} label="9:16" /><Zone index={2} label="9:16" /><Zone index={3} label="9:16" /></div>;
+    case 'P_STACK_3_16_9': return <div className="w-full h-full flex flex-col items-center justify-center h-full gap-[1px] bg-black"><div className="w-full aspect-video"><Zone index={0} className="w-full h-full" label="16:9" /></div><div className="w-full aspect-video"><Zone index={1} className="w-full h-full" label="16:9" /></div><div className="w-full aspect-video"><Zone index={2} className="w-full h-full" label="16:9" /></div></div>;
+    case 'P_STACK_2_4_3': return <div className="w-full h-full flex flex-col items-center justify-center h-full gap-[1px] bg-black"><div className="w-full aspect-[4/3]"><Zone index={0} className="w-full h-full" label="4:3" /></div><div className="w-full aspect-[4/3]"><Zone index={1} className="w-full h-full" label="4:3" /></div></div>;
+    case 'P_HYBRID_TOP_16_9_BOT_9_16': return <div className="w-full h-full flex flex-col items-center justify-center gap-[1px] bg-black"><div className="w-full aspect-video"><Zone index={0} className="w-full h-full" label="16:9" /></div><div className="w-full flex gap-[1px] aspect-[18/16]"><div className="w-1/2 h-full"><Zone index={1} className="w-full h-full" label="9:16" /></div><div className="w-1/2 h-full"><Zone index={2} className="w-full h-full" label="9:16" /></div></div></div>;
+    case 'P_HYBRID_TOP_9_16_BOT_16_9': return <div className="w-full h-full flex flex-col items-center justify-center gap-[1px] bg-black"><div className="w-full flex gap-[1px] aspect-[18/16]"><div className="w-1/2 h-full"><Zone index={0} className="w-full h-full" label="9:16" /></div><div className="w-1/2 h-full"><Zone index={1} className="w-full h-full" label="9:16" /></div></div><div className="w-full aspect-video"><Zone index={2} className="w-full h-full" label="16:9" /></div></div>;
+    case 'P_GRID_12_16_9': return <div className="w-full h-full flex flex-col items-center justify-center bg-black"><div className="w-full grid grid-cols-2 grid-rows-6 gap-[1px]">{[...Array(12)].map((_, i) => <div key={i} className="aspect-video"><Zone index={i} className="w-full h-full" label="16:9" /></div>)}</div></div>;
+    case 'P_BANNER_12': return <div className="w-full h-full flex flex-col h-full gap-[1px] justify-center">{[...Array(12)].map((_, i) => <div key={i} className="w-full aspect-[1080/152]"><Zone index={i} className="w-full h-full" label="Banner" /></div>)}</div>;
+    case 'P_MAIN_4_3_BOT_BANNER': return <div className="w-full h-full flex flex-col items-center justify-center h-full gap-[1px] bg-black"><div className="w-full aspect-[4/3]"><Zone index={0} className="w-full h-full" label="4:3" /></div><div className="w-full flex flex-col gap-[1px]">{[...Array(4)].map((_, i) => <div key={i} className="w-full aspect-[1080/152]"><Zone index={i} className="w-full h-full" label="Banner" /></div>)}</div></div>;
+    case 'P_MENU_5_ZONE': return <div className="w-full h-full flex flex-col items-center justify-center h-full gap-[1px] bg-black"><div className="w-full aspect-video"><Zone index={0} className="w-full h-full" label="16:9" /></div><div className="w-full grid grid-cols-2 gap-[1px] aspect-[32/9]"><Zone index={1} label="16:9" /><Zone index={2} label="16:9" /><Zone index={3} label="16:9" /><Zone index={4} label="16:9" /></div></div>;
+    default: return <div className="w-full h-full flex items-center justify-center text-white border-2 border-dashed border-slate-700">Layout Error</div>;
+  }
+};
+
+// --- Extracted SaveModal Component ---
+const SaveModal = ({ isOpen, onClose, onConfirm, value, onChange }) => {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+      <div className="w-full max-w-md overflow-hidden rounded-2xl bg-slate-900 border border-slate-700 shadow-2xl p-6">
+        <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+          <Save size={20} className="text-blue-400"/> 儲存版型
+        </h3>
+        <p className="text-slate-400 text-sm mb-4">請為您的版型命名，以便日後重複使用。</p>
+        <input 
+          type="text" 
+          value={value} 
+          onChange={onChange} 
+          placeholder="例如：門市週年慶活動 A" 
+          className="w-full rounded-lg bg-black/20 border border-slate-700 px-4 py-3 text-white outline-none mb-6 focus:border-blue-500"
+          autoFocus
+        />
+        <div className="flex justify-end gap-3">
+          <button onClick={onClose} className="px-4 py-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/5">取消</button>
+          <button onClick={onConfirm} disabled={!value.trim()} className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium shadow-lg disabled:opacity-50">確認儲存</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- App ---
+export default function App() {
+  const [view, setView] = useState('login');
+  const [user, setUser] = useState(null);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  
+  const [selectedFilter, setSelectedFilter] = useState('all');
+  const [templateSource, setTemplateSource] = useState('system'); 
+  const [selectedTemplate, setSelectedTemplate] = useState(null);
+  const [savedTemplates, setSavedTemplates] = useState([]);
+  
+  const [zoneConfigs, setZoneConfigs] = useState({});
+  const [activeZoneId, setActiveZoneId] = useState(null);
+  const [isConfigPanelOpen, setIsConfigPanelOpen] = useState(false);
+  const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+  const [newTemplateName, setNewTemplateName] = useState('');
+  
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  
+  const playerRef = useRef(null);
+
+  useEffect(() => {
+    const initAuth = async () => {
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        await signInWithCustomToken(auth, __initial_auth_token);
+      } else {
+        await signInAnonymously(auth);
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
+
+  // Fetch saved templates
+  useEffect(() => {
+    if (!user) return;
+    const q = query(
+      collection(db, 'artifacts', appId, 'users', user.uid, 'saved_templates'),
+      orderBy('createdAt', 'desc')
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const temps = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setSavedTemplates(temps);
+    });
+    return () => unsubscribe();
+  }, [user]);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      if (document.fullscreenElement) {
+        setIsFullscreen(true);
+      }
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && isFullscreen) {
+        setIsFullscreen(false);
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(console.error);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isFullscreen]);
+
+  const handleLogin = (e) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setTimeout(() => {
+      if ((username === 'arron' && password === '8888') || (username === 'ccpinky' && password === 'yses521')) {
+        setView('templates');
+      } else {
+        alert('帳號或密碼錯誤');
+      }
+      setIsLoading(false);
+    }, 800);
+  };
+
+  const handleStartEditing = () => {
+    if (selectedTemplate) {
+      if (templateSource === 'user') {
+        setZoneConfigs(selectedTemplate.zonesConfig || {});
+      } else {
+        setZoneConfigs({});
+      }
+      setView('editor');
+    }
+  };
+
+  const handleZoneClick = (index) => {
+    setActiveZoneId(index);
+    setIsConfigPanelOpen(true);
+  };
+
+  const handleSaveZoneConfig = (config) => {
+    setZoneConfigs(prev => ({
+      ...prev,
+      [activeZoneId]: config
+    }));
+    setIsConfigPanelOpen(false);
+  };
+
+  const handleSaveAsTemplate = async () => {
+    if (!newTemplateName.trim()) return;
+    
+    const baseId = selectedTemplate.baseTemplateId || selectedTemplate.id;
+    const type = selectedTemplate.type; 
+
+    try {
+      await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'saved_templates'), {
+        name: newTemplateName,
+        baseTemplateId: baseId,
+        zonesConfig: zoneConfigs,
+        type: type,
+        createdAt: serverTimestamp()
+      });
+      setIsSaveModalOpen(false);
+      setNewTemplateName('');
+      alert('版型儲存成功！');
+    } catch (error) {
+      console.error("Error saving template:", error);
+      alert('儲存失敗，請稍後再試。');
+    }
+  };
+
+  const toggleFullScreen = () => {
+    if (isFullscreen) {
+        if (document.fullscreenElement) {
+            document.exitFullscreen().catch(console.error);
+        }
+        setIsFullscreen(false);
+    } else {
+        if (playerRef.current) {
+            playerRef.current.requestFullscreen().then(() => {
+                setIsFullscreen(true);
+            }).catch(err => {
+                console.log("Native fullscreen disallowed, using pseudo-fullscreen mode");
+                setIsFullscreen(true);
+            });
+        }
+    }
+  };
+
+  const ConfigPanel = () => {
+    const [activeTab, setActiveTab] = useState('image');
+    const [images, setImages] = useState([]);
+    const [imageSpeed, setImageSpeed] = useState(5);
+    const [webUrl, setWebUrl] = useState('');
+    const [videoUrl, setVideoUrl] = useState('');
+    const [textContent, setTextContent] = useState('');
+    const [videoSourceType, setVideoSourceType] = useState('youtube'); 
+    const [selectedCity, setSelectedCity] = useState(''); 
+    const [cityInput, setCityInput] = useState(''); 
+    const [isSearching, setIsSearching] = useState(false);
+    const [foundCity, setFoundCity] = useState(null); 
+
+    useEffect(() => {
+      const existing = zoneConfigs[activeZoneId];
+      if (existing) {
+        setActiveTab(existing.type);
+        if (existing.type === 'image') {
+          setImages(existing.images || []);
+          setImageSpeed(existing.speed || 5);
+        } else if (existing.type === 'web') setWebUrl(existing.url);
+        else if (existing.type === 'video') {
+          setVideoUrl(existing.url);
+          const isYT = existing.url && (existing.url.includes('youtube.com') || existing.url.includes('youtu.be'));
+          setVideoSourceType(isYT ? 'youtube' : 'file');
+        }
+        else if (existing.type === 'text') setTextContent(existing.text);
+        else if (existing.type === 'weather') {
+             if (existing.lat && existing.lon) {
+                 setSelectedCity(existing.cityName); 
+                 setFoundCity({ name: existing.cityName, lat: existing.lat, lon: existing.lon });
+             } else {
+                 setSelectedCity(existing.city || '臺北市');
+             }
+        }
+      }
+    }, []);
+
+    const handleImageUpload = async (e) => {
+      const files = e.target.files;
+      if (!files || files.length === 0) return;
+      const newImages = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const previewUrl = URL.createObjectURL(file);
+        newImages.push(previewUrl);
+      }
+      setImages(prev => [...prev, ...newImages]);
+    };
+
+    const handleVideoFileUpload = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const previewUrl = URL.createObjectURL(file);
+      setVideoUrl(previewUrl);
+    };
+    
+    const handleCitySearch = async () => {
+        if (!cityInput.trim()) return;
+        setIsSearching(true);
+        setFoundCity(null);
+        try {
+            const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityInput)}&count=1&language=zh&format=json`);
+            const data = await res.json();
+            if (data.results && data.results.length > 0) {
+                const result = data.results[0];
+                const cityData = {
+                    name: result.name,
+                    lat: result.latitude,
+                    lon: result.longitude,
+                    country: result.country
+                };
+                setFoundCity(cityData);
+            } else {
+                alert("找不到該城市，請嘗試其他名稱 (例如: Zhongli 或 中壢)");
+            }
+        } catch (e) {
+            console.error(e);
+            alert("搜尋失敗，請檢查網路連線");
+        } finally {
+            setIsSearching(false);
+        }
+    };
+
+    const handleSave = () => {
+      let config = { type: activeTab };
+      if (activeTab === 'image') config = { ...config, images, speed: imageSpeed };
+      if (activeTab === 'web') config = { ...config, url: webUrl };
+      if (activeTab === 'video') config = { ...config, url: videoUrl };
+      if (activeTab === 'text') config = { ...config, text: textContent };
+      if (activeTab === 'weather') {
+          if (foundCity) {
+              config = { ...config, city: foundCity.name, cityName: foundCity.name, lat: foundCity.lat, lon: foundCity.lon };
+          } else {
+              const defaultCity = TAIWAN_CITIES[0];
+              config = { ...config, city: defaultCity.name, cityName: defaultCity.name, lat: defaultCity.lat, lon: defaultCity.lon };
+          }
+      }
+      handleSaveZoneConfig(config);
+    };
+
+    return (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+        <div className="w-full max-w-2xl overflow-hidden rounded-2xl bg-slate-900 border border-slate-700 shadow-2xl flex flex-col max-h-[90vh]">
+          <div className="flex items-center justify-between border-b border-white/10 p-4 bg-slate-800">
+            <h3 className="text-lg font-bold text-white flex items-center gap-2">
+              <Settings size={20} className="text-blue-400" />
+              編輯區塊 {activeZoneId + 1}
+            </h3>
+            <button onClick={() => setIsConfigPanelOpen(false)} className="text-slate-400 hover:text-white"><X size={24} /></button>
+          </div>
+          <div className="flex flex-1 overflow-hidden">
+            <div className="w-48 bg-slate-950/50 p-2 flex flex-col gap-1 border-r border-white/5">
+              {[
+                { id: 'image', icon: ImageIcon, label: '圖片輪播' },
+                { id: 'web', icon: Globe, label: '網頁瀏覽' },
+                { id: 'video', icon: Youtube, label: '影片播放' },
+                { id: 'text', icon: Type, label: '純文字' },
+                { id: 'weather', icon: CloudSun, label: '即時天氣' },
+              ].map(tab => (
+                <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex items-center gap-3 rounded-lg px-4 py-3 text-sm font-medium transition-all ${activeTab === tab.id ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                  <tab.icon size={18} />{tab.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex-1 p-6 overflow-y-auto bg-slate-900">
+              {activeTab === 'image' && (
+                <div className="space-y-6">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-300 flex justify-between">
+                      <span>上傳圖片 (僅限本機預覽)</span>
+                    </label>
+                    <div className="relative">
+                      <input type="file" multiple accept="image/*" onChange={handleImageUpload} className="hidden" id="image-upload" />
+                      <label htmlFor="image-upload" className="flex items-center justify-center gap-2 w-full h-24 rounded-lg border-2 border-dashed border-slate-700 hover:border-blue-500 hover:bg-slate-800 cursor-pointer transition-all text-slate-400 hover:text-blue-400">
+                        <Upload size={24} /><span className="text-sm">點擊或拖曳圖片</span>
+                      </label>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center text-xs text-slate-500"><span>已選圖片 ({images.length})</span></div>
+                    <div className="grid grid-cols-3 gap-2 max-h-40 overflow-y-auto p-2 bg-black/20 rounded-lg">
+                      {images.map((img, idx) => (
+                        <div key={idx} className="relative group aspect-video bg-slate-800 rounded overflow-hidden border border-white/5">
+                          <img src={img} className="w-full h-full object-cover" />
+                          <button onClick={() => setImages(images.filter((_, i) => i !== idx))} className="absolute top-1 right-1 bg-red-500/80 p-1 rounded-full text-white opacity-0 group-hover:opacity-100"><X size={12} /></button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-300 flex items-center gap-2"><Clock size={16} /> 輪播速度 ({imageSpeed}s)</label>
+                    <input type="range" min="1" max="60" value={imageSpeed} onChange={(e) => setImageSpeed(Number(e.target.value))} className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
+                  </div>
+                </div>
+              )}
+              {activeTab === 'web' && (
+                <div className="space-y-4">
+                  <div className="p-4 bg-blue-900/20 border border-blue-500/30 rounded-lg text-blue-200 text-sm flex items-start gap-3">
+                    <Info size={24} className="mt-0.5 shrink-0 text-blue-400"/>
+                    <div className="flex flex-col gap-1">
+                      <span className="font-bold text-blue-400">網頁出現灰色哭臉或空白？</span>
+                      <span>這表示該網站 (例如 Google, 學校網頁等) 設定了嚴格的安全防護 (X-Frame-Options)，禁止在其他系統中直接嵌入顯示。</span>
+                      <span className="opacity-80 mt-1">針對此類網站，系統會提供「在新視窗開啟」的按鈕作為替代方案。</span>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-300">目標網址 URL</label>
+                    <input type="url" value={webUrl} onChange={(e) => setWebUrl(e.target.value)} placeholder="https://..." className="w-full rounded-lg bg-black/20 border border-slate-700 px-4 py-3 text-white outline-none font-mono" />
+                  </div>
+                </div>
+              )}
+              {activeTab === 'video' && (
+                <div className="space-y-6">
+                  <div className="flex rounded-lg bg-black/20 p-1 border border-slate-700">
+                    <button onClick={() => setVideoSourceType('youtube')} className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-all ${videoSourceType === 'youtube' ? 'bg-red-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}><Youtube size={16} /> YouTube 連結</button>
+                    <button onClick={() => setVideoSourceType('file')} className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-all ${videoSourceType === 'file' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}><FileVideo size={16} /> 上傳影片檔</button>
+                  </div>
+                  {videoSourceType === 'youtube' ? (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-slate-300">YouTube 影片連結</label>
+                      <input type="url" value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)} placeholder="https://youtube.com/watch?v=..." className="w-full rounded-lg bg-black/20 border border-slate-700 px-4 py-3 text-white outline-none" />
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-slate-300 flex justify-between"><span>上傳影片檔案 (MP4, WebM - 僅限本機預覽)</span></label>
+                      <div className="relative">
+                        <input type="file" accept="video/*" onChange={handleVideoFileUpload} className="hidden" id="video-upload" />
+                        <label htmlFor="video-upload" className="flex flex-col items-center justify-center gap-2 w-full h-32 rounded-lg border-2 border-dashed border-slate-700 hover:border-blue-500 hover:bg-slate-800 cursor-pointer transition-all text-slate-400 hover:text-blue-400"><Upload size={24} /><span className="text-sm">點擊選擇影片檔案</span></label>
+                      </div>
+                      {videoUrl && !videoUrl.includes('youtube') && (
+                        <div className="mt-4 rounded-lg overflow-hidden border border-white/10 bg-black">
+                          <video src={videoUrl} controls className="w-full h-40 object-contain" />
+                          <p className="p-2 text-xs text-green-400 bg-slate-900 flex items-center gap-1"><CheckCircle2 size={12} /> 影片已就緒</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+              {activeTab === 'text' && (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-300">文字內容</label>
+                    <textarea value={textContent} onChange={(e) => setTextContent(e.target.value)} placeholder="請輸入..." className="w-full h-32 rounded-lg bg-black/20 border border-slate-700 px-4 py-3 text-white outline-none resize-none" />
+                  </div>
+                </div>
+              )}
+              {activeTab === 'weather' && (
+                <div className="space-y-6">
+                  <div className="p-4 bg-blue-500/20 border border-blue-500/30 rounded-lg text-blue-200 text-sm">
+                    此功能將顯示所選地區的即時天氣資訊、溫度與日期時間。
+                  </div>
+                  
+                  {/* City Search Input */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-300">搜尋城市/地區 (支援全球)</label>
+                    <div className="flex gap-2">
+                       <input 
+                         type="text" 
+                         value={cityInput}
+                         onChange={(e) => setCityInput(e.target.value)}
+                         placeholder="輸入城市名稱 (例如: 中壢)"
+                         className="flex-1 rounded-lg bg-black/20 border border-slate-700 px-4 py-2 text-white outline-none focus:border-blue-500"
+                         onKeyDown={(e) => e.key === 'Enter' && handleCitySearch()}
+                       />
+                       <button 
+                         onClick={handleCitySearch}
+                         disabled={isSearching}
+                         className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 disabled:opacity-50"
+                       >
+                         {isSearching ? <Loader2 className="animate-spin" size={18}/> : <Search size={18} />}
+                         搜尋
+                       </button>
+                    </div>
+                  </div>
+
+                  {/* Search Result / Current Selection */}
+                  {(foundCity || selectedCity) && (
+                     <div className="mt-4 p-4 rounded-xl bg-slate-800 border border-green-500/30 flex flex-col items-center justify-center gap-2 relative overflow-hidden">
+                        <div className="absolute top-0 right-0 p-2 text-green-500"><CheckCircle2 size={16}/></div>
+                        <p className="text-slate-400 text-xs">已選擇地區</p>
+                        <div className="flex items-center gap-2 text-white">
+                           <MapPin size={20} className="text-red-400" />
+                           <span className="text-xl font-bold">{foundCity ? foundCity.name : selectedCity}</span>
+                           {foundCity && <span className="text-sm text-slate-400">({foundCity.country})</span>}
+                        </div>
+                     </div>
+                  )}
+                  
+                  {/* Quick Select */}
+                  <div className="pt-4 border-t border-white/10">
+                     <p className="text-xs text-slate-500 mb-2">或從熱門城市快速選擇：</p>
+                     <div className="flex flex-wrap gap-2">
+                        {TAIWAN_CITIES.slice(0, 5).map(c => (
+                           <button 
+                             key={c.name} 
+                             onClick={() => setFoundCity({ name: c.name, lat: c.lat, lon: c.lon, country: 'TW' })}
+                             className="px-3 py-1 bg-slate-800 hover:bg-slate-700 rounded-full text-xs text-slate-300"
+                           >
+                             {c.name}
+                           </button>
+                        ))}
+                     </div>
+                  </div>
+
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="border-t border-white/10 p-4 bg-slate-800 flex justify-end gap-3">
+            <button onClick={() => setIsConfigPanelOpen(false)} className="px-6 py-2 rounded-lg text-slate-300 hover:text-white font-medium hover:bg-white/5">取消</button>
+            <button onClick={handleSave} className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium shadow-lg">確認儲存</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  if (view === 'login') {
+    return (
+      <div className="relative min-h-screen w-full overflow-hidden font-sans text-white">
+        <div className="absolute inset-0 z-0 bg-cover bg-center" style={{ backgroundImage: 'url("https://images.unsplash.com/photo-1492684223066-81342ee5ff30")' }} />
+        <div className="absolute inset-0 z-0 bg-gradient-to-br from-blue-900/80 via-purple-900/60 to-black/80 backdrop-blur-[2px]" />
+        <div className="relative z-10 flex min-h-screen flex-col items-center justify-center px-4">
+          <div className="mb-8 flex flex-col items-center">
+            <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-white/10 border border-white/20 backdrop-blur-md">
+              <Play fill="white" size={40} className="ml-1 opacity-90" />
+            </div>
+            <h1 className="text-5xl font-bold tracking-tight text-white drop-shadow-lg">Watchme</h1>
+            <p className="mt-2 text-lg font-light text-blue-200 tracking-widest uppercase opacity-80">互動式多媒體播放系統</p>
+          </div>
+          <div className="w-full max-w-md overflow-hidden rounded-3xl border border-white/10 bg-white/10 shadow-2xl backdrop-blur-xl p-8 md:p-12">
+            <h2 className="mb-6 text-center text-2xl font-medium text-white/90">歡迎回來</h2>
+            <form onSubmit={handleLogin} className="space-y-6">
+              <input type="text" value={username} onChange={e => setUsername(e.target.value)} placeholder="使用者帳號" className="h-12 w-full rounded-xl bg-black/20 px-4 text-white outline-none focus:ring-2 focus:ring-blue-400/50" />
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="密碼" className="h-12 w-full rounded-xl bg-black/20 px-4 text-white outline-none focus:ring-2 focus:ring-blue-400/50" />
+              <button type="submit" disabled={isLoading} className="flex h-12 w-full items-center justify-center rounded-xl bg-gradient-to-r from-blue-500 to-purple-600 font-medium text-white shadow-lg disabled:opacity-70">
+                {isLoading ? <Loader2 className="animate-spin" /> : '登入系統'}
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === 'templates') {
+    let currentTemplates = [];
+    if (templateSource === 'system') {
+      currentTemplates = TEMPLATES.filter(t => selectedFilter === 'all' || t.type === selectedFilter);
+    } else {
+      currentTemplates = savedTemplates.filter(t => selectedFilter === 'all' || t.type === selectedFilter);
+    }
+
+    return (
+      <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100">
+        <nav className="flex h-16 items-center justify-between border-b border-white/10 bg-slate-900/80 px-6 backdrop-blur-md sticky top-0 z-50">
+          <div className="flex items-center gap-3"><Play fill="white" size={16} /><span className="text-xl font-bold">Watchme</span></div>
+          <div className="flex items-center gap-4 text-sm text-slate-400">
+             {username} <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white font-bold">{username.charAt(0).toUpperCase()}</div>
+          </div>
+        </nav>
+        <main className="flex-1 p-8 max-w-[1600px] mx-auto w-full pb-24">
+          <div className="mb-8 flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+            <div>
+              <h1 className="text-3xl font-bold text-white mb-2">選擇播放版型</h1>
+              <div className="flex gap-4 border-b border-white/10">
+                <button onClick={() => { setTemplateSource('system'); setSelectedTemplate(null); }} className={`pb-2 px-1 text-sm font-medium transition-colors ${templateSource === 'system' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-slate-400 hover:text-slate-200'}`}>系統預設</button>
+                <button onClick={() => { setTemplateSource('user'); setSelectedTemplate(null); }} className={`pb-2 px-1 text-sm font-medium transition-colors ${templateSource === 'user' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-slate-400 hover:text-slate-200'}`}>我的版型 ({savedTemplates.length})</button>
+              </div>
+            </div>
+            <div className="flex rounded-xl bg-slate-900 p-1 ring-1 ring-white/10">
+              {['all', 'landscape', 'portrait'].map(f => (
+                <button key={f} onClick={() => setSelectedFilter(f)} className={`px-4 py-2 text-sm rounded-lg capitalize ${selectedFilter === f ? 'bg-blue-600 text-white' : 'text-slate-400'}`}>{f}</button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+            {currentTemplates.length === 0 && (
+              <div className="col-span-full py-20 text-center text-slate-500">
+                {templateSource === 'user' ? (
+                  <>
+                    <FolderHeart size={48} className="mx-auto mb-4 opacity-50"/>
+                    <p>尚無儲存的版型</p>
+                    <p className="text-xs mt-2">請先從系統預設版型中建立並儲存。</p>
+                  </>
+                ) : (
+                  <p>沒有符合條件的版型</p>
+                )}
+              </div>
+            )}
+            {currentTemplates.map(t => {
+              const baseTemplate = templateSource === 'user' ? TEMPLATES.find(sys => sys.id === t.baseTemplateId) : t;
+              const layout = baseTemplate ? baseTemplate.layout : 'L_FULL_16_9';
+              const type = baseTemplate ? baseTemplate.type : t.type;
+              return (
+                <div key={t.id} onClick={() => setSelectedTemplate(t)} className={`cursor-pointer rounded-2xl border bg-slate-900/50 overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-xl group ${selectedTemplate?.id === t.id ? 'border-blue-500 ring-2 ring-blue-500/50' : 'border-white/10 hover:border-white/20'}`}>
+                  <div className="h-48 bg-slate-900/50 flex items-center justify-center p-6 relative">
+                    <div className={`transition-transform duration-500 group-hover:scale-105 ${type === 'landscape' ? 'w-full' : 'h-full'}`}>
+                       <TemplatePreview layout={layout} type={type} />
+                    </div>
+                    {selectedTemplate?.id === t.id && (
+                      <div className="absolute top-2 right-2 bg-blue-500 text-white rounded-full p-1 shadow-lg animate-in zoom-in"><Check size={16} /></div>
+                    )}
+                  </div>
+                  <div className="p-4 border-t border-white/5">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h3 className={`font-semibold transition-colors ${selectedTemplate?.id === t.id ? 'text-blue-400' : 'text-white'}`}>{t.name}</h3>
+                        {templateSource === 'system' && <p className="text-xs text-slate-500 mt-1">{t.category}</p>}
+                        {templateSource === 'user' && <p className="text-[10px] text-slate-500 mt-1">建立於: {t.createdAt?.seconds ? new Date(t.createdAt.seconds * 1000).toLocaleDateString() : '剛剛'}</p>}
+                      </div>
+                      {templateSource === 'system' && (
+                        <div className="bg-slate-800 text-slate-400 text-[10px] px-1.5 py-0.5 rounded border border-slate-700">{t.zoneCount} 區</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </main>
+        <div className={`fixed bottom-0 left-0 right-0 bg-slate-900/90 border-t border-white/10 p-4 transition-transform z-50 ${selectedTemplate ? 'translate-y-0' : 'translate-y-full'}`}>
+          <div className="max-w-[1600px] mx-auto flex justify-between items-center">
+            <div className="flex items-center gap-4">
+              <div className="h-10 w-10 bg-slate-800 rounded-lg flex items-center justify-center border border-slate-700">
+                <Layout size={20} className="text-blue-400"/>
+              </div>
+              <div>
+                <p className="text-xs text-slate-400">已選擇{templateSource === 'user' ? '自訂' : ''}版型</p>
+                <p className="text-white font-bold">{selectedTemplate?.name}</p>
+              </div>
+            </div>
+            <button onClick={handleStartEditing} className="flex items-center gap-2 bg-blue-600 text-white px-8 py-3 rounded-xl font-semibold hover:bg-blue-500 hover:shadow-lg hover:shadow-blue-500/25 transition-all active:scale-95">開始編輯版面 <ArrowRight size={18} /></button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === 'editor') {
+    const baseTemplate = templateSource === 'user' ? TEMPLATES.find(t => t.id === selectedTemplate.baseTemplateId) : selectedTemplate;
+    const layoutLayout = baseTemplate ? baseTemplate.layout : 'L_FULL_16_9';
+    const isPortrait = (baseTemplate ? baseTemplate.type : 'landscape') === 'portrait';
+
+    return (
+      <div className="flex h-screen flex-col bg-slate-950 overflow-hidden">
+        <nav className="flex h-16 items-center justify-between border-b border-white/10 bg-slate-900 px-6 shrink-0">
+          <div className="flex items-center gap-4">
+            <button onClick={() => setView('templates')} className="p-2 hover:bg-white/10 rounded-full text-slate-400 hover:text-white transition-colors">
+              <ArrowLeft size={20} />
+            </button>
+            <div className="h-6 w-[1px] bg-white/10" />
+            <div>
+              <h1 className="text-lg font-bold text-white">{selectedTemplate.name}</h1>
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <span className="w-2 h-2 rounded-full bg-yellow-500"></span> 編輯模式
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+             <button onClick={() => setIsSaveModalOpen(true)} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-white/10 bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white transition-colors text-sm font-medium border-blue-500/30">
+               <Save size={16} /> 另存版型
+             </button>
+             <button onClick={() => setZoneConfigs({})} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-white hover:bg-white/10 transition-colors text-sm">
+               <Trash2 size={16} /> 清空內容
+             </button>
+             <button 
+               onClick={toggleFullScreen} 
+               className={`flex items-center gap-2 px-6 py-2 rounded-lg text-white font-medium shadow-lg transition-all active:scale-95 ${isFullscreen ? 'bg-red-600 hover:bg-red-500 shadow-red-500/20' : 'bg-green-600 hover:bg-green-500 shadow-green-500/20'}`}
+             >
+               {isFullscreen ? <Minimize2 size={16} fill="white" /> : <Maximize2 size={16} fill="white" />}
+               {isFullscreen ? '退出播放' : '全螢幕播放'}
+             </button>
+          </div>
+        </nav>
+        <div className="flex-1 overflow-auto p-8 flex items-center justify-center bg-slate-950 relative">
+          <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle, #475569 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
+          <div 
+            ref={playerRef}
+            className={`relative bg-black shadow-2xl ring-8 ring-slate-800 rounded-lg overflow-hidden transition-all duration-500 ease-in-out ${
+              isFullscreen 
+                ? 'w-full h-full max-w-none max-h-none ring-0 rounded-none fixed inset-0 z-50' 
+                : (isPortrait ? 'h-[85vh] aspect-[9/16]' : 'w-[90%] max-w-[1400px] aspect-video')
+            }`}
+          >
+            <LayoutRenderer 
+              layout={layoutLayout} 
+              zonesData={zoneConfigs} 
+              onZoneClick={handleZoneClick} 
+              isPlaying={isFullscreen}
+            />
+          </div>
+        </div>
+        {isConfigPanelOpen && <ConfigPanel />}
+        {isSaveModalOpen && (
+          <SaveModal 
+            isOpen={isSaveModalOpen}
+            onClose={() => setIsSaveModalOpen(false)}
+            onConfirm={handleSaveAsTemplate}
+            value={newTemplateName}
+            onChange={(e) => setNewTemplateName(e.target.value)}
+          />
+        )}
+      </div>
+    );
+  }
+  return null;
+}
